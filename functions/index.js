@@ -7,40 +7,42 @@ const qs = require('querystring')
  * Use the following firebase command:
    firebase functions:config:set site.home="https://oniknights.com" discord.client_id="CLIENT_ID" discord.client_secret="CLIENT_SECRET"
  */
+exports.discordAuth = functions.https.onRequest((req, res) => {
+    const client_id = functions.config().discord.client_id
+    const scopes = 'identify'
+    const redirect_uri = encodeURIComponent(getFunctionUri('discordCallback'))
+    return res.redirect(`https://discordapp.com/oauth2/authorize?response_type=code&client_id=${client_id}&scope=${scopes}&redirect_uri=${redirect_uri}`)
+})
 
 exports.discordCallback = functions.https.onRequest((req, res) => {
     const code = req.query.code
-    const redirect = functions.config().site.home
+    const redirect = functions.config().site.home // TODO replace redirect with programmatic retrieval of url
 
     if(!code) {
         console.error('No code provided by discord')
         return res.redirect(redirect)
     }
-    
-    return getToken(code).then((response) => {
-        return res.redirect(`${redirect}/?token=${response.data.access_token}`)
-    }, (error) => {
-        console.error(error)
-        return res.redirect(`${redirect}/?loginfailed`)
-    })
+
+    return axios.post('https://discordapp.com/api/oauth2/token', qs.stringify({
+            grant_type: 'authorization_code',
+            code: code,
+            client_id: functions.config().discord.client_id,
+            client_secret: functions.config().discord.client_secret,
+            redirect_uri: getFunctionUri('discordCallback')
+        }), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        }).then(response => {
+            return res.redirect(`${redirect}/?token=${response.data.access_token}`)
+        }).catch(error => {
+            console.error(error)
+            return res.redirect(`${redirect}/?loginfailed`)
+        })
 })
 
-const getToken = (code) => {
-    const discordCallback = 'https://us-central1-oniknights-com.cloudfunctions.net/discordCallback'
-
-    const data = {
-        grant_type: 'authorization_code',
-        code: code,
-        client_id: functions.config().discord.client_id,
-        client_secret: functions.config().discord.client_secret,
-        redirect_uri: discordCallback
-    }
-
-    const options = {
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-    }
-
-    return axios.post('https://discordapp.com/api/oauth2/token', qs.stringify(data), options)
+const getFunctionUri = (function_name) => {
+    const region = process.env.FUNCTION_REGION
+    const project_name = process.env.GCP_PROJECT
+    return `https://${region}-${project_name}.cloudfunctions.net/${function_name}`
 }
